@@ -1,0 +1,9 @@
+{
+  "name": "diamond-engine-ultra",
+  "version": "1.0.0",
+  "description": "💎 صانع الأوائل — مولد المذكرات التعليمية",
+  "private": true,
+  "scripts": {
+    "dev": "vercel dev"
+  }
+}
