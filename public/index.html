@@ -1,0 +1,84 @@
+// api/ai.js
+export default async function handler(req, res) {
+  // السماح بطلبات POST فقط
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const { provider, apiKey, userMsg, sysPrompt, imageData } = req.body;
+
+    // المفتاح الثابت الخاص بك لـ Gemini
+    const MY_GEMINI_KEY = "ضع_مفتاح_جيمناي_هنا";
+
+    // إذا كان المزوّد هو جيمناي، نستخدم المفتاح الثابت إذا لم يرسل المستخدم مفتاحاً من الواجهة
+    const finalKey = provider === 'gemini' ? (apiKey || MY_GEMINI_KEY) : apiKey;
+
+    if (!finalKey) {
+      return res.status(400).json({ error: 'يرجى إدخال مفتاح API الخاص بالمزوّد' });
+    }
+
+    let responseText = "";
+
+    if (provider === 'gemini') {
+      const parts = [];
+      if (imageData) {
+        parts.push({ inlineData: { mimeType: imageData.type, data: imageData.data } });
+      }
+      parts.push({ text: sysPrompt ? `${sysPrompt}\n\n${userMsg}` : userMsg });
+
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${finalKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts }] })
+      });
+      
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    } else if (provider === 'openai') {
+      const messages = [];
+      if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+      if (imageData) {
+        messages.push({ role: 'user', content: [
+          { type: 'image_url', image_url: { url: `data:${imageData.type};base64,${imageData.data}` } },
+          { type: 'text', text: userMsg }
+        ]});
+      } else {
+        messages.push({ role: 'user', content: userMsg });
+      }
+
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + finalKey },
+        body: JSON.stringify({ model: 'gpt-4o', max_tokens: 4000, messages })
+      });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      responseText = data.choices?.[0]?.message?.content || "";
+
+    } else {
+      // تفويض لـ Anthropic Claude
+      const hdrs = { 'Content-Type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true', 'x-api-key': finalKey };
+      const content = [];
+      if (imageData) {
+        content.push({ type: 'image', source: { type: 'base64', media_type: imageData.type, data: imageData.data } });
+      }
+      content.push({ type: 'text', text: userMsg });
+      
+      const body = { model: 'claude-3-5-sonnet-20241022', max_tokens: 4000, messages: [{ role: 'user', content }] };
+      if (sysPrompt) body.system = sysPrompt;
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: hdrs, body: JSON.stringify(body) });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      responseText = data.content?.map(c => c.text || '').join('') || "";
+    }
+
+    return res.status(200).json({ text: responseText });
+
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
